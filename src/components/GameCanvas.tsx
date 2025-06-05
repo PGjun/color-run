@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 
 // 게임 설정 변수들
 const GAME_CONFIG = {
@@ -100,50 +100,73 @@ export default function GameCanvas() {
   const requestRef = useRef<number>(0);
   const gameStateRef = useRef<GameState | null>(null);
   const timersRef = useRef({ spawn: 0, colorChange: 0, powerUpSpawn: 0 });
+  const [isClient, setIsClient] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // 클라이언트 사이드에서만 실행되도록 보장
+  useEffect(() => {
+    setIsClient(true);
+    if (typeof window !== "undefined") {
+      setIsMobile(window.innerWidth <= 768);
+
+      const handleResize = () => {
+        setIsMobile(window.innerWidth <= 768);
+      };
+
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+  }, []);
 
   // 로컬 스토리지에서 최고 점수 불러오기
-  const getBestScore = (): number => {
-    if (typeof window !== "undefined") {
+  const getBestScore = useCallback((): number => {
+    if (typeof window !== "undefined" && isClient) {
       return parseInt(localStorage.getItem("colorRunBestScore") || "0");
     }
     return 0;
-  };
+  }, [isClient]);
 
   // 최고 점수 저장
-  const saveBestScore = (score: number) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("colorRunBestScore", score.toString());
-    }
-  };
+  const saveBestScore = useCallback(
+    (score: number) => {
+      if (typeof window !== "undefined" && isClient) {
+        localStorage.setItem("colorRunBestScore", score.toString());
+      }
+    },
+    [isClient]
+  );
 
   // 초기 게임 상태 생성
-  const createInitialGameState = (): GameState => ({
-    player: {
-      x: GAME_CONFIG.PLAYER.X,
-      y: GAME_CONFIG.PLAYER.Y,
-      radius: GAME_CONFIG.PLAYER.RADIUS,
-      vy: 0,
-      color: GAME_CONFIG.COLORS[0],
-      isJumping: false,
-      jumpCount: 0,
-      shield: 0,
-      jumpBoost: 0,
-      lives: 3,
-      invincible: 0,
-    },
-    obstacles: [],
-    powerUps: [],
-    particles: [],
-    score: 0,
-    combo: 0,
-    comboTimer: 0,
-    bestScore: getBestScore(),
-    level: 1,
-    isGameOver: false,
-    colorChangeOnNextObstacle: false,
-    backgroundOffset: 0,
-    gameStarted: false,
-  });
+  const createInitialGameState = useCallback(
+    (): GameState => ({
+      player: {
+        x: GAME_CONFIG.PLAYER.X,
+        y: GAME_CONFIG.PLAYER.Y,
+        radius: GAME_CONFIG.PLAYER.RADIUS,
+        vy: 0,
+        color: GAME_CONFIG.COLORS[0],
+        isJumping: false,
+        jumpCount: 0,
+        shield: 0,
+        jumpBoost: 0,
+        lives: 3,
+        invincible: 0,
+      },
+      obstacles: [],
+      powerUps: [],
+      particles: [],
+      score: 0,
+      combo: 0,
+      comboTimer: 0,
+      bestScore: getBestScore(),
+      level: 1,
+      isGameOver: false,
+      colorChangeOnNextObstacle: false,
+      backgroundOffset: 0,
+      gameStarted: false,
+    }),
+    [getBestScore]
+  );
 
   // 파티클 생성
   const createParticles = (
@@ -171,10 +194,10 @@ export default function GameCanvas() {
   };
 
   // 게임 리셋
-  const resetGame = () => {
+  const resetGame = useCallback(() => {
     gameStateRef.current = createInitialGameState();
     timersRef.current = { spawn: 0, colorChange: 0, powerUpSpawn: 0 };
-  };
+  }, [createInitialGameState]);
 
   // 장애물 생성
   const spawnObstacle = (canvas: HTMLCanvasElement) => {
@@ -325,7 +348,7 @@ export default function GameCanvas() {
   };
 
   // 게임 루프
-  const gameLoop = () => {
+  const gameLoop = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !gameStateRef.current) return;
 
@@ -461,7 +484,6 @@ export default function GameCanvas() {
       ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
       ctx.font = `bold ${canvas.width * 0.045}px Arial`;
 
-      const isMobile = window.innerWidth <= 768;
       const startText = isMobile ? "📱 터치하여 시작" : "🖱️ 클릭하여 시작";
       ctx.fillText(startText, canvas.width / 2, canvas.height * 0.7);
 
@@ -962,36 +984,39 @@ export default function GameCanvas() {
     if (!gameState.isGameOver) {
       requestRef.current = requestAnimationFrame(gameLoop);
     }
-  };
+  }, [
+    handleJump,
+    createInitialGameState,
+    getBestScore,
+    saveBestScore,
+    isMobile,
+    resetGame,
+  ]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // 게임 상태 초기화
+    resetGame();
+
     // 반응형 캔버스 설정
     const updateCanvasSize = () => {
-      const isMobile = window.innerWidth <= 768;
       const maxWidth = isMobile
         ? Math.min(window.innerWidth - 20, 380)
         : GAME_CONFIG.CANVAS_WIDTH;
-      const aspectRatio = GAME_CONFIG.CANVAS_HEIGHT / GAME_CONFIG.CANVAS_WIDTH;
+      const maxHeight = isMobile
+        ? Math.min(window.innerHeight - 200, 500)
+        : GAME_CONFIG.CANVAS_HEIGHT;
 
       canvas.width = maxWidth;
-      canvas.height = maxWidth * aspectRatio;
-
-      // 게임 설정도 업데이트
-      GAME_CONFIG.CANVAS_WIDTH = canvas.width;
-      GAME_CONFIG.CANVAS_HEIGHT = canvas.height;
+      canvas.height = maxHeight;
     };
 
     updateCanvasSize();
     window.addEventListener("resize", updateCanvasSize);
 
-    // 게임 초기화 및 시작
-    resetGame();
-    requestRef.current = requestAnimationFrame(gameLoop);
-
-    // 이벤트 리스너
+    // 키보드 이벤트
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         e.preventDefault();
@@ -999,7 +1024,6 @@ export default function GameCanvas() {
       }
     };
 
-    // 터치 이벤트 추가
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
       handleJump();
@@ -1009,20 +1033,47 @@ export default function GameCanvas() {
       e.preventDefault();
     };
 
+    // 이벤트 리스너 등록
     window.addEventListener("keydown", handleKeyDown);
+    canvas.addEventListener("touchstart", handleTouchStart);
+    canvas.addEventListener("touchend", handleTouchEnd);
     canvas.addEventListener("click", handleJump);
-    canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
-    canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+
+    // 게임 루프 시작
+    requestRef.current = requestAnimationFrame(gameLoop);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", updateCanvasSize);
-      canvas.removeEventListener("click", handleJump);
+      window.removeEventListener("keydown", handleKeyDown);
       canvas.removeEventListener("touchstart", handleTouchStart);
       canvas.removeEventListener("touchend", handleTouchEnd);
+      canvas.removeEventListener("click", handleJump);
       cancelAnimationFrame(requestRef.current);
     };
-  }, [handleJump]);
+  }, [handleJump, gameLoop, resetGame, isMobile]);
+
+  // 클라이언트 사이드에서만 렌더링
+  if (!isClient) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+          backgroundColor: "#0f0f23",
+          fontFamily: "Arial, sans-serif",
+          padding: "10px",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ color: "white", textAlign: "center" }}>
+          <h1>🌈 Color Run</h1>
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1038,16 +1089,6 @@ export default function GameCanvas() {
       }}
     >
       <div style={{ textAlign: "center", width: "100%", maxWidth: "500px" }}>
-        <h1
-          style={{
-            color: "white",
-            marginBottom: "20px",
-            fontSize: window.innerWidth <= 768 ? "2em" : "2.5em",
-            textShadow: "0 0 10px rgba(255, 255, 255, 0.5)",
-          }}
-        >
-          🌈 Color Run
-        </h1>
         <canvas
           ref={canvasRef}
           style={{
@@ -1064,19 +1105,17 @@ export default function GameCanvas() {
           style={{
             color: "rgba(255, 255, 255, 0.8)",
             marginTop: "15px",
-            fontSize: window.innerWidth <= 768 ? "12px" : "14px",
+            fontSize: isMobile ? "12px" : "14px",
             maxWidth: "100%",
           }}
         >
-          <p>🎯 같은 색 장애물을 통과하여 높은 점수를 획득하세요!</p>
-          <p>⚡ 파워업을 수집하여 특별한 능력을 얻으세요!</p>
-          {window.innerWidth <= 768 && (
+          {isMobile && (
             <p style={{ fontSize: "11px", marginTop: "10px" }}>
               📱 화면을 터치하여 점프하세요!
             </p>
           )}
         </div>
-        {window.innerWidth > 768 && (
+        {!isMobile && (
           <div
             style={{
               color: "rgba(255, 255, 255, 0.6)",
