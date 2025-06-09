@@ -102,6 +102,7 @@ export default function GameCanvas() {
   const timersRef = useRef({ spawn: 0, colorChange: 0, powerUpSpawn: 0 });
   const [isClient, setIsClient] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const lastTimeRef = useRef<number>(0);
 
   // 클라이언트 사이드에서만 실행되도록 보장
   useEffect(() => {
@@ -348,650 +349,681 @@ export default function GameCanvas() {
   };
 
   // 게임 루프
-  const gameLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !gameStateRef.current) return;
+  const gameLoop = useCallback(
+    (currentTime: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas || !gameStateRef.current) return;
 
-    const ctx = canvas.getContext("2d")!;
-    const gameState = gameStateRef.current;
-    const { player, obstacles, powerUps, particles } = gameState;
+      // 델타 타임 계산 (초 단위)
+      if (lastTimeRef.current === 0) lastTimeRef.current = currentTime;
+      const deltaTime = (currentTime - lastTimeRef.current) / 1000; // 초 단위로 변환
+      lastTimeRef.current = currentTime;
 
-    // 화면 클리어
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 델타 타임이 너무 크면 제한 (탭 전환 등으로 인한 큰 점프 방지)
+      const clampedDeltaTime = Math.min(deltaTime, 1 / 30); // 최대 30fps 기준
 
-    // 배경 오프셋 업데이트 (천천히 움직임)
-    gameState.backgroundOffset += 0.5;
-    if (gameState.backgroundOffset > canvas.width) {
-      gameState.backgroundOffset = 0;
-    }
+      const ctx = canvas.getContext("2d")!;
+      const gameState = gameStateRef.current;
+      const { player, obstacles, powerUps, particles } = gameState;
 
-    // 배경 그라데이션 (움직이는 효과)
-    const gradient = ctx.createLinearGradient(
-      -gameState.backgroundOffset * 0.1,
-      0,
-      canvas.width - gameState.backgroundOffset * 0.1,
-      canvas.height
-    );
-    gradient.addColorStop(0, "#0f0f23");
-    gradient.addColorStop(0.5, "#1a1a2e");
-    gradient.addColorStop(1, "#16213e");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // 화면 클리어
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 움직이는 별 배경 효과 (여러 레이어)
-    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-    // 빠른 별들
-    for (let i = 0; i < 30; i++) {
-      const x =
-        ((i * 37 - gameState.backgroundOffset * 2) % (canvas.width + 50)) - 25;
-      const y = (i * 23) % canvas.height;
-      if (x > -25 && x < canvas.width + 25) {
-        ctx.fillRect(x, y, 1, 1);
+      // 배경 오프셋 업데이트 (시간 기반)
+      gameState.backgroundOffset += 30 * clampedDeltaTime; // 초당 30픽셀
+      if (gameState.backgroundOffset > canvas.width) {
+        gameState.backgroundOffset = 0;
       }
-    }
 
-    // 중간 속도 별들
-    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-    for (let i = 0; i < 20; i++) {
-      const x =
-        ((i * 53 - gameState.backgroundOffset * 1.2) % (canvas.width + 50)) -
-        25;
-      const y = (i * 41) % canvas.height;
-      if (x > -25 && x < canvas.width + 25) {
-        ctx.fillRect(x, y, 1.5, 1.5);
-      }
-    }
+      // 배경 그라데이션 (움직이는 효과)
+      const gradient = ctx.createLinearGradient(
+        -gameState.backgroundOffset * 0.1,
+        0,
+        canvas.width - gameState.backgroundOffset * 0.1,
+        canvas.height
+      );
+      gradient.addColorStop(0, "#0f0f23");
+      gradient.addColorStop(0.5, "#1a1a2e");
+      gradient.addColorStop(1, "#16213e");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 느린 별들 (큰 별)
-    ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-    for (let i = 0; i < 10; i++) {
-      const x =
-        ((i * 71 - gameState.backgroundOffset * 0.8) % (canvas.width + 50)) -
-        25;
-      const y = (i * 67) % canvas.height;
-      if (x > -25 && x < canvas.width + 25) {
-        ctx.fillRect(x, y, 2, 2);
-      }
-    }
-
-    // 원거리 산맥 실루엣 효과 (매우 천천히 움직임)
-    ctx.fillStyle = "rgba(22, 33, 62, 0.3)";
-    ctx.beginPath();
-    for (let x = -50; x < canvas.width + 50; x += 20) {
-      const offsetX =
-        x - ((gameState.backgroundOffset * 0.2) % (canvas.width + 100));
-      const height =
-        100 +
-        Math.sin(offsetX * 0.01 - gameState.backgroundOffset * 0.001) * 30;
-      if (x === -50) {
-        ctx.moveTo(offsetX, canvas.height - height);
-      } else {
-        ctx.lineTo(offsetX, canvas.height - height);
-      }
-    }
-    ctx.lineTo(canvas.width + 50, canvas.height);
-    ctx.lineTo(-50, canvas.height);
-    ctx.closePath();
-    ctx.fill();
-
-    // 바닥 그리기 (그라데이션 효과)
-    const floorGradient = ctx.createLinearGradient(
-      0,
-      canvas.height - 20,
-      0,
-      canvas.height
-    );
-    floorGradient.addColorStop(0, "#16213e");
-    floorGradient.addColorStop(1, "#0f0f23");
-    ctx.fillStyle = floorGradient;
-    ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
-
-    // 게임이 시작되지 않았으면 타이틀 화면 표시
-    if (!gameState.gameStarted) {
-      // 타이틀 텍스트
-      ctx.fillStyle = "white";
-      ctx.font = `bold ${canvas.width * 0.08}px Arial`;
-      ctx.textAlign = "center";
-      ctx.fillText("🌈 COLOR RUN", canvas.width / 2, canvas.height * 0.3);
-
-      // 부제목
-      ctx.font = `${canvas.width * 0.04}px Arial`;
+      // 움직이는 별 배경 효과 (여러 레이어)
       ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-      ctx.fillText(
-        "같은 색 장애물을 통과하여",
-        canvas.width / 2,
-        canvas.height * 0.42
-      );
-      ctx.fillText(
-        "높은 점수를 획득하세요!",
-        canvas.width / 2,
-        canvas.height * 0.47
-      );
+      // 빠른 별들
+      for (let i = 0; i < 30; i++) {
+        const x =
+          ((i * 37 - gameState.backgroundOffset * 2) % (canvas.width + 50)) -
+          25;
+        const y = (i * 23) % canvas.height;
+        if (x > -25 && x < canvas.width + 25) {
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
 
-      // 최고 점수 표시
-      if (gameState.bestScore > 0) {
-        ctx.font = `${canvas.width * 0.035}px Arial`;
-        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+      // 중간 속도 별들
+      ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+      for (let i = 0; i < 20; i++) {
+        const x =
+          ((i * 53 - gameState.backgroundOffset * 1.2) % (canvas.width + 50)) -
+          25;
+        const y = (i * 41) % canvas.height;
+        if (x > -25 && x < canvas.width + 25) {
+          ctx.fillRect(x, y, 1.5, 1.5);
+        }
+      }
+
+      // 느린 별들 (큰 별)
+      ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+      for (let i = 0; i < 10; i++) {
+        const x =
+          ((i * 71 - gameState.backgroundOffset * 0.8) % (canvas.width + 50)) -
+          25;
+        const y = (i * 67) % canvas.height;
+        if (x > -25 && x < canvas.width + 25) {
+          ctx.fillRect(x, y, 2, 2);
+        }
+      }
+
+      // 원거리 산맥 실루엣 효과 (매우 천천히 움직임)
+      ctx.fillStyle = "rgba(22, 33, 62, 0.3)";
+      ctx.beginPath();
+      for (let x = -50; x < canvas.width + 50; x += 20) {
+        const offsetX =
+          x - ((gameState.backgroundOffset * 0.2) % (canvas.width + 100));
+        const height =
+          100 +
+          Math.sin(offsetX * 0.01 - gameState.backgroundOffset * 0.001) * 30;
+        if (x === -50) {
+          ctx.moveTo(offsetX, canvas.height - height);
+        } else {
+          ctx.lineTo(offsetX, canvas.height - height);
+        }
+      }
+      ctx.lineTo(canvas.width + 50, canvas.height);
+      ctx.lineTo(-50, canvas.height);
+      ctx.closePath();
+      ctx.fill();
+
+      // 바닥 그리기 (그라데이션 효과)
+      const floorGradient = ctx.createLinearGradient(
+        0,
+        canvas.height - 20,
+        0,
+        canvas.height
+      );
+      floorGradient.addColorStop(0, "#16213e");
+      floorGradient.addColorStop(1, "#0f0f23");
+      ctx.fillStyle = floorGradient;
+      ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
+
+      // 게임이 시작되지 않았으면 타이틀 화면 표시
+      if (!gameState.gameStarted) {
+        // 타이틀 텍스트
+        ctx.fillStyle = "white";
+        ctx.font = `bold ${canvas.width * 0.08}px Arial`;
+        ctx.textAlign = "center";
+        ctx.fillText("🌈 COLOR RUN", canvas.width / 2, canvas.height * 0.3);
+
+        // 부제목
+        ctx.font = `${canvas.width * 0.04}px Arial`;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
         ctx.fillText(
-          `최고 점수: ${gameState.bestScore}`,
+          "같은 색 장애물을 통과하여",
           canvas.width / 2,
-          canvas.height * 0.55
+          canvas.height * 0.42
         );
-      }
-
-      // 시작 버튼 (깜빡이는 효과)
-      const pulse = Math.sin(Date.now() * 0.005) * 0.3 + 0.7;
-      ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
-      ctx.font = `bold ${canvas.width * 0.045}px Arial`;
-
-      const startText = isMobile ? "📱 터치하여 시작" : "🖱️ 클릭하여 시작";
-      ctx.fillText(startText, canvas.width / 2, canvas.height * 0.7);
-
-      // 간단한 조작법
-      ctx.font = `${canvas.width * 0.03}px Arial`;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-      const controlText = isMobile
-        ? "터치로 점프 (이중 점프 가능)"
-        : "스페이스바 또는 클릭으로 점프";
-      ctx.fillText(controlText, canvas.width / 2, canvas.height * 0.8);
-
-      // 데모 플레이어 (가운데에 떠있는 상태)
-      const demoY = canvas.height * 0.6;
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2, demoY, player.radius, 0, Math.PI * 2);
-      ctx.fillStyle = player.color;
-      ctx.fill();
-      ctx.strokeStyle = "white";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // 플레이어 눈 그리기
-      ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2 - 6, demoY - 5, 3, 0, Math.PI * 2);
-      ctx.arc(canvas.width / 2 + 6, demoY - 5, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "black";
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2 - 6, demoY - 5, 1.5, 0, Math.PI * 2);
-      ctx.arc(canvas.width / 2 + 6, demoY - 5, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      requestRef.current = requestAnimationFrame(gameLoop);
-      return;
-    }
-
-    // 게임이 시작된 후의 기존 게임 로직
-    // 플레이어 물리 업데이트
-    const gravityMultiplier = 1;
-    player.vy += GAME_CONFIG.PLAYER.GRAVITY * gravityMultiplier;
-    player.y += player.vy * gravityMultiplier;
-
-    // 바닥 충돌 처리
-    const groundY = canvas.height - 20 - player.radius;
-    if (player.y > groundY) {
-      player.y = groundY;
-      player.vy = 0;
-      player.isJumping = false;
-      player.jumpCount = 0; // 바닥에 착지하면 점프 횟수 리셋
-    }
-
-    // 플레이어 그리기 (쉴드 효과 포함)
-    if (player.shield > 0) {
-      // 쉴드 효과
-      ctx.beginPath();
-      ctx.arc(player.x, player.y, player.radius + 8, 0, Math.PI * 2);
-      ctx.strokeStyle = "#00d2d3";
-      ctx.lineWidth = 3;
-      ctx.setLineDash([5, 5]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // 무적 상태일 때 깜빡이는 효과
-    const isBlinking =
-      player.invincible > 0 && Math.floor(Date.now() / 100) % 2 === 0;
-
-    if (!isBlinking) {
-      ctx.beginPath();
-      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-      ctx.fillStyle = player.color;
-      ctx.fill();
-      ctx.strokeStyle = "white";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // 플레이어 눈 그리기
-      ctx.fillStyle = "white";
-      ctx.beginPath();
-      ctx.arc(player.x - 6, player.y - 5, 3, 0, Math.PI * 2);
-      ctx.arc(player.x + 6, player.y - 5, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "black";
-      ctx.beginPath();
-      ctx.arc(player.x - 6, player.y - 5, 1.5, 0, Math.PI * 2);
-      ctx.arc(player.x + 6, player.y - 5, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // 현재 게임 속도 계산
-    const speedMultiplier = 1;
-    const currentSpeed = Math.min(
-      GAME_CONFIG.OBSTACLE.BASE_SPEED *
-        (1 +
-          Math.floor(gameState.score / 100) * GAME_CONFIG.SPEED_INCREASE_RATE) *
-        speedMultiplier,
-      GAME_CONFIG.OBSTACLE.BASE_SPEED * GAME_CONFIG.MAX_SPEED_MULTIPLIER
-    );
-
-    // 레벨 계산
-    gameState.level = Math.floor(gameState.score / 100) + 1;
-
-    // 장애물 업데이트 및 그리기
-    obstacles.forEach((obstacle) => {
-      obstacle.x -= currentSpeed;
-
-      // 장애물 높이 결정
-      let obstacleHeight = GAME_CONFIG.OBSTACLE.HEIGHT;
-      if (obstacle.type === "tall") {
-        obstacleHeight = GAME_CONFIG.OBSTACLE.HEIGHT * 1.8;
-      }
-
-      // 장애물 그리기
-      const obstacleTop = canvas.height - obstacleHeight - 20;
-
-      // 보너스 장애물은 반짝이는 효과
-      if (obstacle.type === "bonus") {
-        const glow = Math.sin(Date.now() * 0.01) * 0.3 + 0.7;
-        ctx.shadowColor = obstacle.color;
-        ctx.shadowBlur = 10 * glow;
-      }
-
-      // 높은 장애물은 그라데이션 효과
-      if (obstacle.type === "tall") {
-        const gradient = ctx.createLinearGradient(
-          obstacle.x,
-          obstacleTop,
-          obstacle.x,
-          obstacleTop + obstacleHeight
+        ctx.fillText(
+          "높은 점수를 획득하세요!",
+          canvas.width / 2,
+          canvas.height * 0.47
         );
-        gradient.addColorStop(0, obstacle.color);
-        gradient.addColorStop(1, obstacle.color + "80"); // 투명도 추가
-        ctx.fillStyle = gradient;
-      } else {
-        ctx.fillStyle = obstacle.color;
-      }
 
-      ctx.fillRect(
-        obstacle.x,
-        obstacleTop,
-        GAME_CONFIG.OBSTACLE.WIDTH,
-        obstacleHeight
-      );
-
-      // 장애물 타입별 표시
-      if (obstacle.type === "bonus") {
-        ctx.fillStyle = "white";
-        ctx.font = "bold 12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("★", obstacle.x + 15, obstacleTop + 30);
-        ctx.shadowBlur = 0;
-      } else if (obstacle.type === "tall") {
-        ctx.fillStyle = "white";
-        ctx.font = "bold 10px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("↑↑", obstacle.x + 15, obstacleTop + 20);
-      }
-
-      ctx.strokeStyle = "white";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(
-        obstacle.x,
-        obstacleTop,
-        GAME_CONFIG.OBSTACLE.WIDTH,
-        obstacleHeight
-      );
-
-      // 충돌 검사
-      const collision = checkCollision(player, obstacle, canvas);
-
-      // 같은 색 장애물 통과 시 콤보 증가 처리
-      if (
-        collision.hit &&
-        collision.type === "pass" &&
-        player.color === obstacle.color
-      ) {
-        // 같은 색 장애물을 통과하는 경우
-        if (!obstacle.passed) {
-          let baseScore = 10;
-          if (obstacle.type === "bonus") baseScore = 20;
-          else if (obstacle.type === "tall") baseScore = 15;
-
-          const comboBonus = Math.floor(gameState.combo / 5) * 5;
-          const totalScore = baseScore + comboBonus;
-
-          gameState.score += totalScore;
-          gameState.combo += 1; // 통과할 때만 콤보 증가
-          gameState.comboTimer = GAME_CONFIG.COMBO_TIMEOUT; // 5초로 리셋
-          obstacle.passed = true;
-
-          // 파티클 효과
-          createParticles(
-            obstacle.x + 15,
-            obstacleTop + obstacleHeight / 2,
-            obstacle.color,
-            10
+        // 최고 점수 표시
+        if (gameState.bestScore > 0) {
+          ctx.font = `${canvas.width * 0.035}px Arial`;
+          ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+          ctx.fillText(
+            `최고 점수: ${gameState.bestScore}`,
+            canvas.width / 2,
+            canvas.height * 0.55
           );
         }
-      }
-      // 다른 색 장애물 통과 시 피해 처리
-      else if (
-        collision.hit &&
-        collision.type === "pass" &&
-        player.color !== obstacle.color
-      ) {
-        // 다른 색 장애물을 통과하려고 하면 충돌
-        if (player.invincible <= 0) {
-          if (player.shield > 0) {
-            // 쉴드로 보호됨
-            player.shield = 0;
-            createParticles(player.x, player.y, "#00d2d3", 12);
-            gameState.combo = 0; // 콤보 리셋 (피해 입음)
-            gameState.comboTimer = 0; // 콤보 타이머도 리셋
-            if (!obstacle.passed) {
-              gameState.score += 1;
-              obstacle.passed = true;
-            }
-          } else {
-            // 생명력 감소
-            player.lives--;
-            player.invincible = 120; // 2초 무적
-            createParticles(player.x, player.y, "#ff4757", 15);
-            gameState.combo = 0; // 콤보 리셋 (피해 입음)
-            gameState.comboTimer = 0; // 콤보 타이머도 리셋
 
-            if (player.lives <= 0) {
-              // 게임 오버
-              gameState.isGameOver = true;
-              if (gameState.score > gameState.bestScore) {
-                gameState.bestScore = gameState.score;
-                saveBestScore(gameState.score);
+        // 시작 버튼 (깜빡이는 효과)
+        const pulse = Math.sin(Date.now() * 0.005) * 0.3 + 0.7;
+        ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
+        ctx.font = `bold ${canvas.width * 0.045}px Arial`;
+
+        const startText = isMobile ? "📱 터치하여 시작" : "🖱️ 클릭하여 시작";
+        ctx.fillText(startText, canvas.width / 2, canvas.height * 0.7);
+
+        // 간단한 조작법
+        ctx.font = `${canvas.width * 0.03}px Arial`;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+        const controlText = isMobile
+          ? "터치로 점프 (이중 점프 가능)"
+          : "스페이스바 또는 클릭으로 점프";
+        ctx.fillText(controlText, canvas.width / 2, canvas.height * 0.8);
+
+        // 데모 플레이어 (가운데에 떠있는 상태)
+        const demoY = canvas.height * 0.6;
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2, demoY, player.radius, 0, Math.PI * 2);
+        ctx.fillStyle = player.color;
+        ctx.fill();
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 플레이어 눈 그리기
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2 - 6, demoY - 5, 3, 0, Math.PI * 2);
+        ctx.arc(canvas.width / 2 + 6, demoY - 5, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "black";
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2 - 6, demoY - 5, 1.5, 0, Math.PI * 2);
+        ctx.arc(canvas.width / 2 + 6, demoY - 5, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        requestRef.current = requestAnimationFrame(gameLoop);
+        return;
+      }
+
+      // 게임이 시작된 후의 기존 게임 로직
+      // 플레이어 물리 업데이트 (시간 기반)
+      player.vy += GAME_CONFIG.PLAYER.GRAVITY * 60 * clampedDeltaTime; // 초당 중력 적용
+      player.y += player.vy * 60 * clampedDeltaTime; // 초당 이동
+
+      // 바닥 충돌 처리
+      const groundY = canvas.height - 20 - player.radius;
+      if (player.y > groundY) {
+        player.y = groundY;
+        player.vy = 0;
+        player.isJumping = false;
+        player.jumpCount = 0; // 바닥에 착지하면 점프 횟수 리셋
+      }
+
+      // 플레이어 그리기 (쉴드 효과 포함)
+      if (player.shield > 0) {
+        // 쉴드 효과
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius + 8, 0, Math.PI * 2);
+        ctx.strokeStyle = "#00d2d3";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 무적 상태일 때 깜빡이는 효과
+      const isBlinking =
+        player.invincible > 0 && Math.floor(Date.now() / 100) % 2 === 0;
+
+      if (!isBlinking) {
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+        ctx.fillStyle = player.color;
+        ctx.fill();
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 플레이어 눈 그리기
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(player.x - 6, player.y - 5, 3, 0, Math.PI * 2);
+        ctx.arc(player.x + 6, player.y - 5, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "black";
+        ctx.beginPath();
+        ctx.arc(player.x - 6, player.y - 5, 1.5, 0, Math.PI * 2);
+        ctx.arc(player.x + 6, player.y - 5, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 현재 게임 속도 계산 (시간 기반)
+      const speedMultiplier = 1;
+      const currentSpeed = Math.min(
+        GAME_CONFIG.OBSTACLE.BASE_SPEED *
+          60 * // 초당 픽셀로 변환
+          (1 +
+            Math.floor(gameState.score / 100) *
+              GAME_CONFIG.SPEED_INCREASE_RATE) *
+          speedMultiplier,
+        GAME_CONFIG.OBSTACLE.BASE_SPEED * 60 * GAME_CONFIG.MAX_SPEED_MULTIPLIER
+      );
+
+      // 레벨 계산
+      gameState.level = Math.floor(gameState.score / 100) + 1;
+
+      // 장애물 업데이트 및 그리기 (시간 기반)
+      obstacles.forEach((obstacle) => {
+        obstacle.x -= currentSpeed * clampedDeltaTime; // 시간 기반 이동
+
+        // 장애물 높이 결정
+        let obstacleHeight = GAME_CONFIG.OBSTACLE.HEIGHT;
+        if (obstacle.type === "tall") {
+          obstacleHeight = GAME_CONFIG.OBSTACLE.HEIGHT * 1.8;
+        }
+
+        // 장애물 그리기
+        const obstacleTop = canvas.height - obstacleHeight - 20;
+
+        // 보너스 장애물은 반짝이는 효과
+        if (obstacle.type === "bonus") {
+          const glow = Math.sin(Date.now() * 0.01) * 0.3 + 0.7;
+          ctx.shadowColor = obstacle.color;
+          ctx.shadowBlur = 10 * glow;
+        }
+
+        // 높은 장애물은 그라데이션 효과
+        if (obstacle.type === "tall") {
+          const gradient = ctx.createLinearGradient(
+            obstacle.x,
+            obstacleTop,
+            obstacle.x,
+            obstacleTop + obstacleHeight
+          );
+          gradient.addColorStop(0, obstacle.color);
+          gradient.addColorStop(1, obstacle.color + "80"); // 투명도 추가
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = obstacle.color;
+        }
+
+        ctx.fillRect(
+          obstacle.x,
+          obstacleTop,
+          GAME_CONFIG.OBSTACLE.WIDTH,
+          obstacleHeight
+        );
+
+        // 장애물 타입별 표시
+        if (obstacle.type === "bonus") {
+          ctx.fillStyle = "white";
+          ctx.font = "bold 12px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText("★", obstacle.x + 15, obstacleTop + 30);
+          ctx.shadowBlur = 0;
+        } else if (obstacle.type === "tall") {
+          ctx.fillStyle = "white";
+          ctx.font = "bold 10px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText("↑↑", obstacle.x + 15, obstacleTop + 20);
+        }
+
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(
+          obstacle.x,
+          obstacleTop,
+          GAME_CONFIG.OBSTACLE.WIDTH,
+          obstacleHeight
+        );
+
+        // 충돌 검사
+        const collision = checkCollision(player, obstacle, canvas);
+
+        // 같은 색 장애물 통과 시 콤보 증가 처리
+        if (
+          collision.hit &&
+          collision.type === "pass" &&
+          player.color === obstacle.color
+        ) {
+          // 같은 색 장애물을 통과하는 경우
+          if (!obstacle.passed) {
+            let baseScore = 10;
+            if (obstacle.type === "bonus") baseScore = 20;
+            else if (obstacle.type === "tall") baseScore = 15;
+
+            const comboBonus = Math.floor(gameState.combo / 5) * 5;
+            const totalScore = baseScore + comboBonus;
+
+            gameState.score += totalScore;
+            gameState.combo += 1; // 통과할 때만 콤보 증가
+            gameState.comboTimer = GAME_CONFIG.COMBO_TIMEOUT; // 5초로 리셋
+            obstacle.passed = true;
+
+            // 파티클 효과
+            createParticles(
+              obstacle.x + 15,
+              obstacleTop + obstacleHeight / 2,
+              obstacle.color,
+              10
+            );
+          }
+        }
+        // 다른 색 장애물 통과 시 피해 처리
+        else if (
+          collision.hit &&
+          collision.type === "pass" &&
+          player.color !== obstacle.color
+        ) {
+          // 다른 색 장애물을 통과하려고 하면 충돌
+          if (player.invincible <= 0) {
+            if (player.shield > 0) {
+              // 쉴드로 보호됨
+              player.shield = 0;
+              createParticles(player.x, player.y, "#00d2d3", 12);
+              gameState.combo = 0; // 콤보 리셋 (피해 입음)
+              gameState.comboTimer = 0; // 콤보 타이머도 리셋
+              if (!obstacle.passed) {
+                gameState.score += 1;
+                obstacle.passed = true;
               }
-              cancelAnimationFrame(requestRef.current);
-              setTimeout(() => {
-                alert(
-                  `게임 오버! 점수: ${gameState.score}\n최고 점수: ${gameState.bestScore}`
-                );
-                resetGame();
-                requestRef.current = requestAnimationFrame(gameLoop);
-              }, 100);
-              return;
+            } else {
+              // 생명력 감소
+              player.lives--;
+              player.invincible = 120; // 2초 무적
+              createParticles(player.x, player.y, "#ff4757", 15);
+              gameState.combo = 0; // 콤보 리셋 (피해 입음)
+              gameState.comboTimer = 0; // 콤보 타이머도 리셋
+
+              if (player.lives <= 0) {
+                // 게임 오버
+                gameState.isGameOver = true;
+                if (gameState.score > gameState.bestScore) {
+                  gameState.bestScore = gameState.score;
+                  saveBestScore(gameState.score);
+                }
+                cancelAnimationFrame(requestRef.current);
+                setTimeout(() => {
+                  alert(
+                    `게임 오버! 점수: ${gameState.score}\n최고 점수: ${gameState.bestScore}`
+                  );
+                  resetGame();
+                  lastTimeRef.current = 0; // 시간 리셋
+                  requestRef.current = requestAnimationFrame(gameLoop);
+                }, 100);
+                return;
+              }
             }
           }
         }
-      }
-      // 점프로 장애물을 넘어가는 경우 (콤보 증가 없음)
-      else if (
-        collision.type === "jump" &&
-        obstacle.x < player.x &&
-        obstacle.x + GAME_CONFIG.OBSTACLE.WIDTH > player.x
-      ) {
-        if (!obstacle.passed) {
-          let baseScore = 1;
-          if (obstacle.type === "tall") baseScore = 2;
+        // 점프로 장애물을 넘어가는 경우 (콤보 증가 없음)
+        else if (
+          collision.type === "jump" &&
+          obstacle.x < player.x &&
+          obstacle.x + GAME_CONFIG.OBSTACLE.WIDTH > player.x
+        ) {
+          if (!obstacle.passed) {
+            let baseScore = 1;
+            if (obstacle.type === "tall") baseScore = 2;
 
-          gameState.score += baseScore;
-          // 점프할 때는 콤보 증가 안함
-          obstacle.passed = true;
-        }
-      }
-
-      // 장애물을 완전히 지나간 후 색상 변경 체크 (같은 색 통과한 경우만)
-      if (
-        obstacle.passed &&
-        obstacle.x + GAME_CONFIG.OBSTACLE.WIDTH <
-          player.x - player.radius - 10 &&
-        !obstacle.colorChanged
-      ) {
-        // 같은 색이었고 통과했다면 1~10 랜덤 확률로 색상 변경 (40% 확률)
-        if (player.color === obstacle.color) {
-          const randomChance = Math.floor(Math.random() * 10) + 1; // 1~10
-          if (randomChance <= 4) {
-            // 40% 확률 (1,2,3,4가 나올 확률)
-            gameState.colorChangeOnNextObstacle = true;
+            gameState.score += baseScore;
+            // 점프할 때는 콤보 증가 안함
+            obstacle.passed = true;
           }
         }
-        obstacle.colorChanged = true; // 중복 처리 방지
-      }
-    });
 
-    // 파워업 업데이트 및 그리기
-    powerUps.forEach((powerUp) => {
-      powerUp.x -= currentSpeed;
+        // 장애물을 완전히 지나간 후 색상 변경 체크 (같은 색 통과한 경우만)
+        if (
+          obstacle.passed &&
+          obstacle.x + GAME_CONFIG.OBSTACLE.WIDTH <
+            player.x - player.radius - 10 &&
+          !obstacle.colorChanged
+        ) {
+          // 같은 색이었고 통과했다면 1~10 랜덤 확률로 색상 변경 (40% 확률)
+          if (player.color === obstacle.color) {
+            const randomChance = Math.floor(Math.random() * 10) + 1; // 1~10
+            if (randomChance <= 4) {
+              // 40% 확률 (1,2,3,4가 나올 확률)
+              gameState.colorChangeOnNextObstacle = true;
+            }
+          }
+          obstacle.colorChanged = true; // 중복 처리 방지
+        }
+      });
 
-      // 파워업 그리기
-      const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
-      ctx.save();
-      ctx.translate(powerUp.x + 15, powerUp.y);
-      ctx.scale(pulse, pulse);
+      // 파워업 업데이트 및 그리기 (시간 기반)
+      powerUps.forEach((powerUp) => {
+        powerUp.x -= currentSpeed * clampedDeltaTime; // 시간 기반 이동
 
-      // 파워업 타입별 색상과 아이콘
-      switch (powerUp.type) {
-        case "shield":
-          ctx.fillStyle = "#00d2d3";
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(0, 0, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = "white";
-          ctx.font = "bold 16px Arial";
-          ctx.textAlign = "center";
-          ctx.fillText("🛡", 0, 5);
-          break;
-        case "bonus":
-          ctx.fillStyle = "#ff6b9d";
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(0, 0, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = "white";
-          ctx.font = "bold 16px Arial";
-          ctx.textAlign = "center";
-          ctx.fillText("💎", 0, 5);
-          break;
-        case "life":
-          ctx.fillStyle = "#ff4757";
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(0, 0, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = "white";
-          ctx.font = "bold 16px Arial";
-          ctx.textAlign = "center";
-          ctx.fillText("❤️", 0, 5);
-          break;
-        case "jumpBoost":
-          ctx.fillStyle = "#2ed573";
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(0, 0, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = "white";
-          ctx.font = "bold 16px Arial";
-          ctx.textAlign = "center";
-          ctx.fillText("🚀", 0, 5);
-          break;
-      }
-      ctx.restore();
+        // 파워업 그리기
+        const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
+        ctx.save();
+        ctx.translate(powerUp.x + 15, powerUp.y);
+        ctx.scale(pulse, pulse);
 
-      // 파워업 충돌 검사
-      if (checkPowerUpCollision(player, powerUp) && !powerUp.collected) {
-        powerUp.collected = true;
-        createParticles(powerUp.x + 15, powerUp.y, "#ffa502", 15);
-
+        // 파워업 타입별 색상과 아이콘
         switch (powerUp.type) {
           case "shield":
-            player.shield = GAME_CONFIG.POWERUP.DURATION;
+            ctx.fillStyle = "#00d2d3";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("🛡", 0, 5);
             break;
           case "bonus":
-            gameState.score += 50;
+            ctx.fillStyle = "#ff6b9d";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("💎", 0, 5);
             break;
           case "life":
-            if (player.lives < 3) {
-              // 최대 3개까지만
-              player.lives++;
-            }
+            ctx.fillStyle = "#ff4757";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("❤️", 0, 5);
             break;
           case "jumpBoost":
-            player.jumpBoost = GAME_CONFIG.POWERUP.DURATION;
+            ctx.fillStyle = "#2ed573";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "white";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("🚀", 0, 5);
             break;
         }
+        ctx.restore();
+
+        // 파워업 충돌 검사
+        if (checkPowerUpCollision(player, powerUp) && !powerUp.collected) {
+          powerUp.collected = true;
+          createParticles(powerUp.x + 15, powerUp.y, "#ffa502", 15);
+
+          switch (powerUp.type) {
+            case "shield":
+              player.shield = GAME_CONFIG.POWERUP.DURATION;
+              break;
+            case "bonus":
+              gameState.score += 50;
+              break;
+            case "life":
+              if (player.lives < 3) {
+                // 최대 3개까지만
+                player.lives++;
+              }
+              break;
+            case "jumpBoost":
+              player.jumpBoost = GAME_CONFIG.POWERUP.DURATION;
+              break;
+          }
+        }
+      });
+
+      // 파티클 업데이트 및 그리기 (시간 기반)
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const particle = particles[i];
+        particle.x += particle.vx * 60 * clampedDeltaTime; // 시간 기반 이동
+        particle.y += particle.vy * 60 * clampedDeltaTime;
+        particle.vy += 0.1 * 60 * clampedDeltaTime; // 시간 기반 중력
+        particle.life -= 60 * clampedDeltaTime; // 시간 기반 수명 감소
+
+        // 수명이 다한 파티클 제거
+        if (particle.life <= 0) {
+          particles.splice(i, 1);
+          continue;
+        }
+
+        const alpha = Math.max(0, particle.life / particle.maxLife);
+        const radius = Math.max(0.1, particle.size * alpha); // 최소 반지름 보장
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
-    });
 
-    // 파티클 업데이트 및 그리기
-    particles.forEach((particle, index) => {
-      particle.x += particle.vx;
-      particle.y += particle.vy;
-      particle.vy += 0.1; // 중력
-      particle.life--;
-
-      const alpha = particle.life / particle.maxLife;
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = particle.color;
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      if (particle.life <= 0) {
-        particles.splice(index, 1);
-      }
-    });
-
-    // 화면 밖으로 나간 요소들 제거
-    gameState.obstacles = obstacles.filter(
-      (obs) => obs.x > -GAME_CONFIG.OBSTACLE.WIDTH
-    );
-    gameState.powerUps = powerUps.filter(
-      (powerUp) => powerUp.x > -30 && !powerUp.collected
-    );
-
-    // 장애물 생성
-    timersRef.current.spawn++;
-    if (
-      timersRef.current.spawn >
-      GAME_CONFIG.OBSTACLE.SPAWN_INTERVAL - Math.floor(gameState.level * 2)
-    ) {
-      spawnObstacle(canvas);
-      timersRef.current.spawn = 0;
-    }
-
-    // 파워업 생성
-    timersRef.current.powerUpSpawn++;
-    if (
-      timersRef.current.powerUpSpawn > 200 &&
-      Math.random() < GAME_CONFIG.POWERUP.SPAWN_CHANCE
-    ) {
-      spawnPowerUp(canvas);
-      timersRef.current.powerUpSpawn = 0;
-    }
-
-    // 플레이어 색상 변경 - 장애물 통과 후에만 변경
-    if (gameState.colorChangeOnNextObstacle) {
-      const availableColors = GAME_CONFIG.COLORS.filter(
-        (color) => color !== player.color
+      // 화면 밖으로 나간 요소들 제거
+      gameState.obstacles = obstacles.filter(
+        (obs) => obs.x > -GAME_CONFIG.OBSTACLE.WIDTH
       );
-      const newColor =
-        availableColors[Math.floor(Math.random() * availableColors.length)];
-      player.color = newColor;
-      createParticles(player.x, player.y, player.color, 6);
-      gameState.colorChangeOnNextObstacle = false;
-    }
+      gameState.powerUps = powerUps.filter(
+        (powerUp) => powerUp.x > -30 && !powerUp.collected
+      );
 
-    // 파워업 타이머 감소
-    if (player.shield > 0) player.shield--;
-    if (player.jumpBoost > 0) player.jumpBoost--;
-    if (player.invincible > 0) player.invincible--; // 무적 시간 감소
+      // 장애물 생성 (시간 기반)
+      timersRef.current.spawn += 60 * clampedDeltaTime; // 초당 60 증가
+      if (
+        timersRef.current.spawn >
+        GAME_CONFIG.OBSTACLE.SPAWN_INTERVAL - Math.floor(gameState.level * 2)
+      ) {
+        spawnObstacle(canvas);
+        timersRef.current.spawn = 0;
+      }
 
-    // 콤보 타이머 감소
-    if (gameState.comboTimer > 0) {
-      gameState.comboTimer--;
-    } else {
-      gameState.combo = 0;
-    }
+      // 파워업 생성 (시간 기반)
+      timersRef.current.powerUpSpawn += 60 * clampedDeltaTime; // 초당 60 증가
+      if (
+        timersRef.current.powerUpSpawn > 200 &&
+        Math.random() < GAME_CONFIG.POWERUP.SPAWN_CHANCE * clampedDeltaTime * 60
+      ) {
+        spawnPowerUp(canvas);
+        timersRef.current.powerUpSpawn = 0;
+      }
 
-    // UI 그리기
-    ctx.fillStyle = "white";
-    ctx.font = "bold 28px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(`${gameState.score}`, canvas.width / 2, 40);
+      // 플레이어 색상 변경 - 장애물 통과 후에만 변경
+      if (gameState.colorChangeOnNextObstacle) {
+        const availableColors = GAME_CONFIG.COLORS.filter(
+          (color) => color !== player.color
+        );
+        const newColor =
+          availableColors[Math.floor(Math.random() * availableColors.length)];
+        player.color = newColor;
+        createParticles(player.x, player.y, player.color, 6);
+        gameState.colorChangeOnNextObstacle = false;
+      }
 
-    ctx.font = "16px Arial";
-    ctx.fillText(
-      `레벨 ${gameState.level} | 속도 ${currentSpeed.toFixed(1)}x`,
-      canvas.width / 2,
-      65
-    );
+      // 파워업 타이머 감소 (시간 기반)
+      if (player.shield > 0)
+        player.shield = Math.max(0, player.shield - 60 * clampedDeltaTime);
+      if (player.jumpBoost > 0)
+        player.jumpBoost = Math.max(
+          0,
+          player.jumpBoost - 60 * clampedDeltaTime
+        );
+      if (player.invincible > 0)
+        player.invincible = Math.max(
+          0,
+          player.invincible - 60 * clampedDeltaTime
+        ); // 무적 시간 감소
 
-    // 생명력 표시
-    ctx.fillStyle = "#ff4757";
-    ctx.font = "20px Arial";
-    ctx.textAlign = "left";
-    let heartsText = "";
-    for (let i = 0; i < player.lives; i++) {
-      heartsText += "❤️";
-    }
-    ctx.fillText(heartsText, 10, 50);
+      // 콤보 타이머 감소 (시간 기반)
+      if (gameState.comboTimer > 0) {
+        gameState.comboTimer = Math.max(
+          0,
+          gameState.comboTimer - 60 * clampedDeltaTime
+        );
+      } else {
+        gameState.combo = 0;
+      }
 
-    // 콤보 표시
-    if (gameState.combo > 1) {
-      ctx.fillStyle = "#ff6b9d";
-      ctx.font = "bold 20px Arial";
+      // UI 그리기
+      ctx.fillStyle = "white";
+      ctx.font = "bold 28px Arial";
       ctx.textAlign = "center";
-      ctx.fillText(`${gameState.combo}x COMBO!`, canvas.width / 2, 90);
-    }
+      ctx.fillText(`${gameState.score}`, canvas.width / 2, 40);
 
-    // 최고 점수 표시
-    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-    ctx.font = "14px Arial";
-    ctx.textAlign = "right";
-    ctx.fillText(`최고: ${gameState.bestScore}`, canvas.width - 10, 25);
+      ctx.font = "16px Arial";
+      ctx.fillText(
+        `레벨 ${gameState.level} | 속도 ${currentSpeed.toFixed(1)}x`,
+        canvas.width / 2,
+        65
+      );
 
-    // 파워업 상태 표시
-    ctx.textAlign = "left";
-    let statusY = 25;
-    if (player.shield > 0) {
-      ctx.fillStyle = "#00d2d3";
-      ctx.fillText(`🛡 ${Math.ceil(player.shield / 60)}s`, 10, statusY);
-      statusY += 20;
-    }
-    if (player.jumpBoost > 0) {
-      ctx.fillStyle = "#2ed573";
-      ctx.fillText(`🚀 ${Math.ceil(player.jumpBoost / 60)}s`, 10, statusY);
-    }
+      // 생명력 표시
+      ctx.fillStyle = "#ff4757";
+      ctx.font = "20px Arial";
+      ctx.textAlign = "left";
+      let heartsText = "";
+      for (let i = 0; i < player.lives; i++) {
+        heartsText += "❤️";
+      }
+      ctx.fillText(heartsText, 10, 50);
 
-    if (!gameState.isGameOver) {
-      requestRef.current = requestAnimationFrame(gameLoop);
-    }
-  }, [
-    handleJump,
-    createInitialGameState,
-    getBestScore,
-    saveBestScore,
-    isMobile,
-    resetGame,
-  ]);
+      // 콤보 표시
+      if (gameState.combo > 1) {
+        ctx.fillStyle = "#ff6b9d";
+        ctx.font = "bold 20px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(`${gameState.combo}x COMBO!`, canvas.width / 2, 90);
+      }
+
+      // 최고 점수 표시
+      ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+      ctx.font = "14px Arial";
+      ctx.textAlign = "right";
+      ctx.fillText(`최고: ${gameState.bestScore}`, canvas.width - 10, 25);
+
+      // 파워업 상태 표시
+      ctx.textAlign = "left";
+      let statusY = 25;
+      if (player.shield > 0) {
+        ctx.fillStyle = "#00d2d3";
+        ctx.fillText(`🛡 ${Math.ceil(player.shield / 60)}s`, 10, statusY);
+        statusY += 20;
+      }
+      if (player.jumpBoost > 0) {
+        ctx.fillStyle = "#2ed573";
+        ctx.fillText(`🚀 ${Math.ceil(player.jumpBoost / 60)}s`, 10, statusY);
+      }
+
+      if (!gameState.isGameOver) {
+        requestRef.current = requestAnimationFrame(gameLoop);
+      }
+    },
+    [
+      handleJump,
+      createInitialGameState,
+      getBestScore,
+      saveBestScore,
+      isMobile,
+      resetGame,
+    ]
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -999,6 +1031,7 @@ export default function GameCanvas() {
 
     // 게임 상태 초기화
     resetGame();
+    lastTimeRef.current = 0; // 시간 초기화
 
     // 반응형 캔버스 설정
     const updateCanvasSize = () => {
